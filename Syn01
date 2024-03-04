@@ -1,0 +1,117 @@
+from flask import Flask, jsonify
+import pandas as pd
+from nltk.corpus import wordnet
+import nltk
+import requests
+import csv
+from flask_cors import CORS
+from nltk.stem import WordNetLemmatizer
+
+nltk.download('wordnet')  # Download nltk
+app = Flask(__name__)
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+CORS(app)
+
+# Jira server URL and credentials
+jira_url = 'https://deepakkhushcool.atlassian.net'
+username = 'deepakkhushcool25@gmail.com'
+password = 'ATATT3xFfGF0iIlRuBQIiCjYF2ddm7W68lxjvL8P70AdPM8CuMjVfjRxagoVIO-Wqypp0VK1Y7exTFFxaY1CxbQ-JVf0IEx5Gcm6oTZiUmVrOPAJd_04zYR4t_asXmB9yruhk6Ed4i-93KJHfIg9wj-COidcIz8RSMFr6a2KPudZNw5UWxfceEE=23639F79'
+
+# Lemmatizer for stemming words to their root form
+lemmatizer = WordNetLemmatizer()
+
+def find_synonyms(word):
+    synonyms = []  # storing the synonyms of the word
+    for syn in wordnet.synsets(word):
+        for lemma in syn.lemmas():
+            synonyms.append(lemma.name())
+    return set(synonyms)
+
+def get_unique_issue_types():
+    try:
+        # Construct URL for issue types endpoint
+        url = f"{jira_url}/rest/api/2/issuetype"
+
+        # Make API call to Jira
+        response = requests.get(url, auth=(username, password), verify=False)
+
+        # Check if request was successful
+        if response.status_code == 200:
+            # Parse JSON response
+            data = response.json()
+            # Extract unique issue types
+            unique_issue_types = {issue_type['name'] for issue_type in data}
+            return unique_issue_types
+        else:
+            print(f"Error: {response.status_code}, {response.text}")
+            return None
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+
+# Saving data into csv file
+def save_to_csv(unique_issue_types, file_name='issue_types.csv'):
+    try:
+        with open(file_name, 'w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(['Issue Type'])
+            for issue_type in unique_issue_types:
+                writer.writerow([issue_type])
+        print(f'Unique issue types saved to {file_name}')
+    except Exception as e:
+        print(f"An error occurred while saving to CSV: {e}")
+
+# Routes
+@app.route("/synonyms")
+def find_synonyms_within_list():
+    try:
+        # Get unique issue types from Jira
+        unique_issue_types = get_unique_issue_types()
+        if unique_issue_types:
+            # Save unique issue types to CSV
+            save_to_csv(unique_issue_types)
+
+        # Read CSV file and convert issue types to lowercase
+        df = pd.read_csv('issue_types.csv')
+        word_list = df['Issue Type'].apply(lambda x: lemmatizer.lemmatize(x.lower())).tolist()
+
+        synonyms_list = []
+        duplicates_list = []
+
+        # Iterate over each word in the list
+        for word in word_list:
+            # Find synonyms for the word
+            synonyms = find_synonyms(word)
+            synonyms_within_list = [synonym for synonym in synonyms if lemmatizer.lemmatize(synonym.lower()) in word_list]
+            synonyms_within_list.sort()
+
+            # Check if the word is a duplicate
+            if len(synonyms_within_list) > 1:
+                duplicates_list.append(word)
+
+            # Add synonyms to the list
+            if synonyms_within_list not in synonyms_list:
+                synonyms_list.append(synonyms_within_list)
+
+        return {
+            "status": 200,
+            "message": 'Lists of Synonyms and Duplicates',
+            "data": {
+                "synonymsList": synonyms_list,
+                "originalList": word_list,
+                "synonymsCount": len(synonyms_list),
+                "duplicatesList": duplicates_list,
+                "duplicatesCount": len(duplicates_list)
+            }
+        }
+
+    except Exception as e:
+        return {
+            "status": 500,
+            "message": 'Internal Server Error',
+            "data": str(e),
+        }
+
+if __name__ == "__main__":
+    app.run(debug=True, port=3000)
